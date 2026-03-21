@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "AnushaBazaar Partner",
+    "slug": "anushabazaar",
+    "scheme": "anushabazaar",
+    "version": "1.0.0",
+    "splash": {
+      "backgroundColor": "#F8FAFC"
+    },
+    "icon": "./assets/banner1.png",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.anusha.deliveryapp",
+      "usesCleartextTraffic": true,
+      "googleServicesFile": "./google-services.json",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyBAYMd8QexGKTMK3eYW_YcWvogYN2upr8o"
+        }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "ios": {
+      "config": {
+        "googleMapsApiKey": "AIzaSyCojeb7YPVmHMF5riY9Q6bWydmC6l9IHI8"
+      }
+    },
+    "plugins": [
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow AnushaBazaar Partner to access your camera for barcode scanning."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24,
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "34.0.0",
+            "usesCleartextTraffic": true
+          },
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "50351285-14db-4205-af7d-08a0d052b069"
+      }
+    }
+  }
+}

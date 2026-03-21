@@ -1,0 +1,733 @@
+import React, { useState, useEffect, useRef } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Image,
+  Dimensions,
+  Alert,
+  Modal,
+  Pressable,
+  ImageBackground,
+  RefreshControl,
+  TextInput
+} from "react-native";
+import MapView, { Marker, PROVIDER_DEFAULT } from "react-native-maps";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useUser } from "../../context/UserContext";
+import { profileService } from "../../services/profileService";
+import { payoutService } from "../../services/payoutService";
+import { orderService } from "../../services/orderService";
+import { useRouter } from "expo-router";
+import { useLanguage } from "../../context/LanguageContext";
+import CustomTouchableOpacity from "../../components/CustomTouchableOpacity";
+import Animated, {
+  FadeInDown,
+  FadeInUp,
+  FadeInLeft,
+} from "react-native-reanimated";
+import { StatusBar } from "expo-status-bar";
+import { LinearGradient } from "expo-linear-gradient";
+import PremiumPopup, { PopupType } from "../../components/PremiumPopup";
+
+const { width } = Dimensions.get("window");
+
+export default function Home() {
+  const router = useRouter();
+  const { authState } = useUser();
+  const { t } = useLanguage();
+  const [active, setActive] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  
+  // Dashboard Data
+  const [dashboard, setDashboard] = useState({ totalEarnings: 0, activeOrders: 0 });
+  
+  const [popup, setPopup] = useState<{visible: boolean, type: PopupType, title: string, message: string}>({
+    visible: false, type: "success", title: "", message: ""
+  });
+  
+  // Incoming Order State
+  const [incomingOrder, setIncomingOrder] = useState<{ id: string, vendor: string, location: string, distance: string, earnings: string } | null>({
+    id: "#ORD-8812",
+    vendor: "Anusha Fresh Mart",
+    location: "Kukatpally Phase 1",
+    distance: "2.4 km",
+    earnings: "₹65"
+  });
+  
+  // Rejection State
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [customRejectReason, setCustomRejectReason] = useState("");
+  const REJECT_REASONS = ["Vehicle Breakdown", "Out of Fuel", "Too Far", "Personal Emergency", "Other"];
+  
+  // Rejected Orders History
+  const [rejectedOrders, setRejectedOrders] = useState<{ id: string, reason: string, time: string }[]>([]);
+  
+  const fetchDashboard = async () => {
+    if (!user?.id) return;
+    try {
+      // Execute verified endpoints in parallel for maximum UI speed
+      const [statusRes, payoutsRes, ordersRes] = await Promise.all([
+        profileService.getStatus().catch(() => null),
+        payoutService.getTotalPaid(user.id).catch(() => 0),
+        orderService.getActiveOrders(user.id).catch(() => [])
+      ]);
+      
+      const isOnline = statusRes?.deliveryPerson?.isOnline || false;
+      setActive(isOnline);
+
+      setDashboard({
+        totalEarnings: typeof payoutsRes === 'number' ? payoutsRes : (payoutsRes?.totalPaid || 0),
+        activeOrders: Array.isArray(ordersRes) ? ordersRes.length : 0,
+      });
+
+    } catch (e: any) {
+      console.warn("Failed to synchronize telemetry:", e.message);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboard();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchDashboard();
+    setRefreshing(false);
+  };
+
+  const handleAcceptOrder = () => {
+    Alert.alert("Order Accepted!", "The order has been moved to your Active Tasks.");
+    setIncomingOrder(null);
+  };
+
+  const handleRejectOrderSubmit = () => {
+    const finalReason = rejectReason === "Other" ? customRejectReason : rejectReason;
+    if (!finalReason.trim()) {
+      Alert.alert("Reason Required", "Please specify a reason for rejecting the order.");
+      return;
+    }
+    
+    // Add to history
+    if (incomingOrder) {
+      setRejectedOrders(prev => [{
+        id: incomingOrder.id,
+        reason: finalReason,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }, ...prev]);
+    }
+    
+    setShowRejectModal(false);
+    setIncomingOrder(null);
+    setRejectReason("");
+    setCustomRejectReason("");
+    Alert.alert("Order Rejected", "We have notified the admin.");
+  };
+
+  const toggleOnline = async () => {
+    const newState = !active;
+    setActive(newState); // Optimistic UI update
+    
+    try {
+      await profileService.updateOnlineStatus(newState);
+    } catch (e: any) {
+      setActive(!newState); // Revert on failure
+      
+      const status = e?.response?.status;
+      if (status === 403) {
+        setPopup({
+          visible: true,
+          type: "error",
+          title: "Dashboard Locked",
+          message: "You cannot go online until your account is approved by the admin. Please ensure all documents are safely uploaded."
+        });
+      } else {
+        setPopup({
+          visible: true,
+          type: "error",
+          title: "Connection Issue",
+          message: "Failed to properly sync your duty status with the central server."
+        });
+      }
+      setTimeout(() => setPopup(prev => ({...prev, visible: false})), 3500);
+    }
+  };
+
+  const user = authState.user;
+
+  const scrollRef = useRef<ScrollView>(null);
+  const [currentSlide, setCurrentSlide] = useState(0);
+
+  const carouselBanners = [
+    { id: '1', title: 'Multi-Vendor Pickups', subtitle: 'Earn 2x on orders from multiple stores', icon: 'storefront-outline' as const, colors: ['#6366F1', '#4F46E5'], iconBg: 'rgba(255,255,255,0.2)' },
+    { id: '2', title: 'New Vendors Added!', subtitle: '5 new grocery stores near you', icon: 'basket-check-outline' as const, colors: ['#10B981', '#059669'], iconBg: 'rgba(255,255,255,0.2)' },
+    { id: '3', title: 'Refer & Earn', subtitle: 'Get ₹500 for every new partner', icon: 'gift-outline' as const, colors: ['#F59E0B', '#D97706'], iconBg: 'rgba(255,255,255,0.2)' },
+    { id: '4', title: 'Peak Hours', subtitle: '3x Surge in your current location', icon: 'lightning-bolt' as const, colors: ['#EF4444', '#DC2626'], iconBg: 'rgba(255,255,255,0.2)' },
+  ];
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (scrollRef.current) {
+        let nextSlide = currentSlide + 1;
+        if (nextSlide >= carouselBanners.length) {
+          nextSlide = 0;
+        }
+        scrollRef.current.scrollTo({ x: nextSlide * (width - 32), animated: true });
+        setCurrentSlide(nextSlide);
+      }
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [currentSlide]);
+
+  const onMomentumScrollEnd = (event: any) => {
+    const slideSize = event.nativeEvent.layoutMeasurement.width;
+    const index = event.nativeEvent.contentOffset.x / slideSize;
+    setCurrentSlide(Math.round(index));
+  };
+
+  const goToSlide = (index: number) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ x: index * (width - 32), animated: true });
+      setCurrentSlide(index);
+    }
+  };
+
+  return (
+    <>
+    <PremiumPopup {...popup} />
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <SafeAreaView style={styles.safe} edges={['top']}>
+
+        {/* Clean Professional Header */}
+        <View style={styles.homeHeader}>
+          <View style={styles.headerLeft}>
+            <LinearGradient
+              colors={['#7C3AED', '#6366F1']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.groceryIconBox}
+            >
+              <MaterialCommunityIcons name="lightning-bolt" size={22} color="#fff" />
+            </LinearGradient>
+            <View>
+              <Text style={styles.brandName}>Anusha Bazaar</Text>
+              <Text style={styles.headerGreeting}>Good Day, {user?.name?.split(' ')[0] || 'Partner'} ✨</Text>
+            </View>
+          </View>
+
+          <View style={styles.headerRight}>
+            <CustomTouchableOpacity
+              activeOpacity={0.9}
+              onPress={toggleOnline}
+              style={[styles.statusPill, active ? styles.statusPillOnline : styles.statusPillOffline]}
+            >
+              <View style={[styles.statusDot, { backgroundColor: active ? '#fff' : '#94A3B8' }]} />
+              <Text style={[styles.statusPillText, { color: active ? '#fff' : '#64748B' }]}>{active ? 'ONLINE' : 'OFFLINE'}</Text>
+            </CustomTouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.headerIconBtn}
+              onPress={() => setShowSupport(true)}
+            >
+              <MaterialCommunityIcons name="face-agent" size={22} color="#0F172A" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.headerIconBtn}
+              onPress={() => router.push("/notifications")}
+            >
+              <MaterialCommunityIcons name="bell-ring-outline" size={22} color="#0F172A" />
+              <View style={styles.notifBadge} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <ScrollView 
+          showsVerticalScrollIndicator={false} 
+          contentContainerStyle={styles.scrollContent} 
+          bounces={true}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7C3AED" />
+          }
+        >
+
+          {/* Incoming Order Card */}
+          {incomingOrder && (
+            <Animated.View entering={FadeInDown} style={styles.incomingOrderCard}>
+              <View style={styles.incomingOrderHeader}>
+                <View style={styles.incomingBadge}>
+                  <View style={[styles.pulseDot, { backgroundColor: '#fff' }]} />
+                  <Text style={styles.incomingBadgeText}>New Assigned Order</Text>
+                </View>
+                <Text style={styles.incomingOrderId}>{incomingOrder.id}</Text>
+              </View>
+
+              <View style={styles.incomingOrderDetails}>
+                <View style={styles.incomingRow}>
+                  <View style={styles.incomingIconWrap}>
+                    <MaterialCommunityIcons name="storefront" size={20} color="#6366F1" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.incomingLabel}>Pickup From</Text>
+                    <Text style={styles.incomingValue} numberOfLines={1}>{incomingOrder.vendor}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.routeConnector}>
+                  <View style={styles.routeDot} />
+                  <View style={styles.routeLine} />
+                  <View style={styles.routeDot} />
+                </View>
+
+                <View style={styles.incomingRow}>
+                  <View style={[styles.incomingIconWrap, { backgroundColor: '#F0FDF4' }]}>
+                    <MaterialCommunityIcons name="map-marker" size={20} color="#10B981" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.incomingLabel}>Drop At</Text>
+                    <Text style={styles.incomingValue} numberOfLines={1}>{incomingOrder.location}</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.incomingHighlights}>
+                <View style={styles.highlightBox}>
+                  <MaterialCommunityIcons name="currency-inr" size={16} color="#F59E0B" />
+                  <Text style={styles.highlightText}>{incomingOrder.earnings} Est.</Text>
+                </View>
+                <View style={styles.highlightBox}>
+                  <MaterialCommunityIcons name="map-marker-distance" size={16} color="#38BDF8" />
+                  <Text style={styles.highlightText}>{incomingOrder.distance}</Text>
+                </View>
+              </View>
+
+              <View style={styles.incomingActions}>
+                <TouchableOpacity onPress={() => setShowRejectModal(true)} style={styles.rejectBtn}>
+                  <Text style={styles.rejectBtnText}>Reject</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleAcceptOrder} style={styles.acceptBtn}>
+                  <LinearGradient colors={['#10B981', '#059669']} style={StyleSheet.absoluteFillObject} />
+                  <Text style={styles.acceptBtnText}>Accept Order</Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          )}
+
+          {/* Carousel */}
+          <View style={styles.carouselContainer}>
+            <ScrollView
+              ref={scrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              pagingEnabled
+              snapToInterval={width - 32}
+              decelerationRate="fast"
+              onMomentumScrollEnd={onMomentumScrollEnd}
+            >
+              {carouselBanners.map((banner, index) => (
+                <View key={banner.id} style={styles.autoBannerCard}>
+                    <LinearGradient
+                      colors={banner.colors as any}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.bannerGradient}
+                    >
+                    <View style={styles.bannerContent}>
+                      <View style={styles.bannerTextContainer}>
+                        <Animated.Text 
+                          entering={FadeInLeft.delay(index * 100)}
+                          style={styles.autoBannerTitle}
+                        >
+                          {banner.title}
+                        </Animated.Text>
+                        <Animated.Text 
+                          entering={FadeInLeft.delay(index * 150)}
+                          style={styles.autoBannerSub}
+                        >
+                          {banner.subtitle}
+                        </Animated.Text>
+                      </View>
+                      <View style={[styles.autoBannerIconCircle, { backgroundColor: banner.iconBg }]}>
+                        <MaterialCommunityIcons name={banner.icon} size={32} color="#fff" />
+                      </View>
+                    </View>
+                  </LinearGradient>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.paginationDots}>
+              {carouselBanners.map((_, i) => (
+                <CustomTouchableOpacity 
+                   key={i} 
+                   onPress={() => goToSlide(i)}
+                   style={[styles.carouselDot, currentSlide === i && styles.carouselDotActive]} 
+                />
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.statsRow}>
+            <StatCard
+              label={t('earnings')}
+              value={`₹${dashboard.totalEarnings.toFixed(2)}`}
+              icon="bank-outline"
+              color="#F59E0B"
+              colors={['#1E293B', '#0F172A']}
+              onPress={() => router.push("/(tabs)/earnings")}
+            />
+            <StatCard
+              label={t('activeOrders')}
+              value={dashboard.activeOrders.toString()}
+              icon="bike-fast"
+              color="#38BDF8"
+              colors={['#1E293B', '#0F172A']}
+              onPress={() => router.push("/(tabs)/orders")}
+            />
+          </View>
+
+          {/* Live Demand */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{t('liveDemand')}</Text>
+            <View style={styles.liveIndicator}>
+              <View style={styles.pulseDot} />
+              <Text style={styles.liveText}>LIVE</Text>
+            </View>
+          </View>
+
+          <Animated.View entering={FadeInUp.delay(200)} style={styles.mapCardOuter}>
+            <View style={styles.mapCardInner}>
+              <MapView
+                provider={PROVIDER_DEFAULT}
+                style={styles.mapImg}
+                initialRegion={{
+                  latitude: 17.4399,
+                  longitude: 78.4983,
+                  latitudeDelta: 0.0922,
+                  longitudeDelta: 0.0421,
+                }}
+                scrollEnabled={false}
+              >
+                <Marker coordinate={{ latitude: 17.4399, longitude: 78.4983 }} />
+              </MapView>
+              <View style={[styles.mapOverlayBlur, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+                <View style={styles.demandBadge}>
+                  <MaterialCommunityIcons name="lightning-bolt" size={16} color="#fff" />
+                  <Text style={styles.demandText}>High Demand Area</Text>
+                </View>
+              </View>
+              <TouchableOpacity style={styles.mapExpandBtn}>
+                <MaterialCommunityIcons name="arrow-expand-all" size={20} color="#1A1A1A" />
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+
+          {/* Quick Actions */}
+          <View style={styles.quickGrid}>
+            <QuickAction icon="wallet-outline" label="Earnings" color="#7C3AED" bg="#F5F3FF" onPress={() => router.push("/(tabs)/earnings")} />
+            <QuickAction icon="clipboard-text-outline" label="Orders" color="#10B981" bg="#ECFDF5" onPress={() => router.push("/(tabs)/orders")} />
+            <QuickAction icon="account-group-outline" label="Refer" color="#F59E0B" bg="#FFFBEB" onPress={() => { }} />
+            <QuickAction icon="headphones" label="Support" color="#EF4444" bg="#FEF2F2" onPress={() => setShowSupport(true)} />
+          </View>
+
+          {/* Recent Rejections Section */}
+          {rejectedOrders.length > 0 && (
+            <Animated.View entering={FadeInUp.delay(300)}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Recent Rejections</Text>
+              </View>
+              <View style={styles.rejectionsCard}>
+                {rejectedOrders.map((ro, i) => (
+                  <View key={`${ro.id}-${i}`} style={[styles.rejectionItem, i !== 0 && styles.rejectionItemBorder]}>
+                    <View style={styles.rejectionItemLeft}>
+                      <View style={styles.rejectionIconBox}>
+                        <MaterialCommunityIcons name="close-circle-outline" size={20} color="#EF4444" />
+                      </View>
+                      <View>
+                        <Text style={styles.rejectionOrderId}>{ro.id}</Text>
+                        <Text style={styles.rejectionReasonText} numberOfLines={1}>{ro.reason}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.rejectionTime}>{ro.time}</Text>
+                  </View>
+                ))}
+              </View>
+            </Animated.View>
+          )}
+
+        </ScrollView>
+      </SafeAreaView>
+
+      {/* Support Modal */}
+      <Modal visible={showSupport} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <Animated.View entering={FadeInUp} style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Support Center</Text>
+                <Text style={styles.modalSubtitle}>How can we assist you today?</Text>
+              </View>
+              <CustomTouchableOpacity onPress={() => setShowSupport(false)} style={styles.modalCloseBtn}>
+                <MaterialCommunityIcons name="close" size={24} color="#1A1A1A" />
+              </CustomTouchableOpacity>
+            </View>
+
+            <View style={styles.supportGrid}>
+              <SupportTile
+                icon="phone-in-talk"
+                label="Call Support"
+                desc="Direct line to partner care"
+                color="#4F46E5"
+                onPress={() => Alert.alert("Calling Support", "Connecting you to our team...")}
+              />
+              <SupportTile
+                icon="chat-processing"
+                label="Chat with Us"
+                desc="Instant message with agent"
+                color="#10B981"
+                onPress={() => Alert.alert("Opening Chat", "Starting a secure chat session...")}
+              />
+              <SupportTile
+                icon="frequently-asked-questions"
+                label="View FAQs"
+                desc="Browse helpful articles"
+                color="#F59E0B"
+                onPress={() => Alert.alert("FAQs", "Opening help center...")}
+              />
+            </View>
+
+            <CustomTouchableOpacity style={styles.modalSecondaryBtn} onPress={() => setShowSupport(false)}>
+              <Text style={styles.modalSecondaryBtnText}>Close</Text>
+            </CustomTouchableOpacity>
+          </Animated.View>
+        </View>
+      </Modal>
+
+      {/* Reject Order Modal */}
+      <Modal visible={showRejectModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <Animated.View entering={FadeInUp.springify().damping(20)} style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Reject Order</Text>
+                <Text style={styles.modalSubtitle}>Please select a valid reason</Text>
+              </View>
+              <CustomTouchableOpacity onPress={() => setShowRejectModal(false)} style={styles.modalCloseBtn}>
+                <MaterialCommunityIcons name="close" size={24} color="#1A1A1A" />
+              </CustomTouchableOpacity>
+            </View>
+
+            <View style={styles.reasonGrid}>
+              {REJECT_REASONS.map((reason) => (
+                <TouchableOpacity 
+                  key={reason} 
+                  activeOpacity={0.7}
+                  onPress={() => setRejectReason(reason)}
+                  style={[styles.reasonChip, rejectReason === reason && styles.reasonChipActive]}
+                >
+                  <MaterialCommunityIcons 
+                    name={rejectReason === reason ? "radiobox-marked" : "radiobox-blank"} 
+                    size={20} 
+                    color={rejectReason === reason ? "#EF4444" : "#94A3B8"} 
+                  />
+                  <Text style={[styles.reasonChipText, rejectReason === reason && styles.reasonChipTextActive]}>
+                    {reason}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {rejectReason === "Other" && (
+              <Animated.View entering={FadeInDown.duration(200)}>
+                <TextInput
+                  style={styles.reasonInput}
+                  placeholder="Type your specific reason here..."
+                  placeholderTextColor="#94A3B8"
+                  value={customRejectReason}
+                  onChangeText={setCustomRejectReason}
+                  multiline
+                  maxLength={100}
+                />
+              </Animated.View>
+            )}
+
+            <CustomTouchableOpacity 
+              style={[styles.modalDangerBtn, !rejectReason && { opacity: 0.5 }]} 
+              onPress={handleRejectOrderSubmit}
+              disabled={!rejectReason}
+            >
+              <Text style={styles.modalDangerBtnText}>Submit Rejection</Text>
+            </CustomTouchableOpacity>
+          </Animated.View>
+        </View>
+      </Modal>
+    </View>
+    </>
+  );
+}
+
+function StatCard({ label, value, icon, color, colors, onPress }: { label: string, value: string, icon: any, color: string, colors: string[], onPress?: () => void }) {
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={styles.statCardContainer}>
+      <LinearGradient colors={colors as any} style={styles.statCardGradient}>
+        <Animated.View entering={FadeInDown.delay(100)}>
+          <View style={styles.statHeaderRow}>
+            <View style={[styles.statIconWrap, { backgroundColor: color + '20' }]}>
+              <MaterialCommunityIcons name={icon} size={22} color={color} />
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={18} color="rgba(255,255,255,0.3)" />
+          </View>
+          <Text style={styles.statValueText}>{value}</Text>
+          <Text style={styles.statLabelText}>{label}</Text>
+        </Animated.View>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
+function QuickAction({ icon, label, color, bg, onPress }: { icon: any, label: string, color: string, bg: string, onPress: () => void }) {
+  return (
+    <CustomTouchableOpacity onPress={onPress} style={[styles.quickActionTile, { backgroundColor: bg }]}>
+      <View style={[styles.quickActionIconBox, { backgroundColor: color + '18' }]}>
+        <MaterialCommunityIcons name={icon} size={24} color={color} />
+      </View>
+      <Text style={styles.quickActionLabel}>{label}</Text>
+    </CustomTouchableOpacity>
+  );
+}
+
+function SupportTile({ icon, label, desc, color, onPress }: { icon: any, label: string, desc: string, color: string, onPress: () => void }) {
+  return (
+    <CustomTouchableOpacity onPress={onPress} style={styles.supportTile}>
+      <View style={[styles.tileIconBox, { backgroundColor: color + '15' }]}>
+        <MaterialCommunityIcons name={icon} size={28} color={color} />
+      </View>
+      <View style={styles.tileTextContent}>
+        <Text style={styles.tileLabel}>{label}</Text>
+        <Text style={styles.tileDesc}>{desc}</Text>
+      </View>
+      <MaterialCommunityIcons name="chevron-right" size={24} color="#CBD5E1" />
+    </CustomTouchableOpacity>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#F8FAFC" },
+  safe: { flex: 1, backgroundColor: "#FFFFFF" },
+  homeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  groceryIconBox: { width: 38, height: 38, borderRadius: 12, backgroundColor: '#7C3AED', justifyContent: 'center', alignItems: 'center' },
+  brandName: { fontSize: 16, fontWeight: '900', color: '#0F172A', letterSpacing: -0.3 },
+  headerGreeting: { fontSize: 12, color: '#64748B', fontWeight: '600', marginTop: 1 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerIconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#F1F5F9' },
+  statusPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, gap: 5 },
+  statusPillOnline: { backgroundColor: '#22C55E' },
+  statusPillOffline: { backgroundColor: '#F1F5F9' },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  statusPillText: { fontSize: 11, fontWeight: '800' },
+  notifBadge: { position: 'absolute', top: 8, right: 8, width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', borderWidth: 1.5, borderColor: '#FFFFFF' },
+
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 100, paddingTop: 20, backgroundColor: '#F8FAFC' },
+  carouselContainer: { marginBottom: 24, width: '100%' },
+  autoBannerCard: { width: width - 36, height: 140, marginRight: 12, borderRadius: 24, overflow: 'hidden' },
+  bannerGradient: { flex: 1, borderRadius: 24 },
+  bannerContent: { flex: 1, padding: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  bannerTextContainer: { flex: 1, marginRight: 15 },
+  autoBannerTitle: { fontSize: 20, fontWeight: '900', color: '#FFFFFF', marginBottom: 6, letterSpacing: -0.5 },
+  autoBannerSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', fontWeight: '600', lineHeight: 18 },
+  autoBannerIconCircle: { width: 64, height: 64, borderRadius: 22, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
+  paginationDots: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 16, gap: 8 },
+  carouselDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#E2E8F0' },
+  carouselDotActive: { width: 24, height: 8, borderRadius: 4, backgroundColor: '#7C3AED' },
+
+  statsRow: { flexDirection: 'row', gap: 14, marginBottom: 24, marginTop: 8 },
+  statCardContainer: { flex: 1, borderRadius: 24, overflow: 'hidden', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 10 },
+  statCardGradient: { padding: 18, minHeight: 140 },
+  statHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  statIconWrap: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  statValueText: { fontSize: 24, fontWeight: '900', color: '#FFFFFF', letterSpacing: -0.5 },
+  statLabelText: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 4 },
+
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, marginTop: 8 },
+  sectionTitle: { color: '#0F172A', fontSize: 18, fontWeight: '900', letterSpacing: -0.5 },
+  liveIndicator: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FEE2E2', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10 },
+  pulseDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#EF4444' },
+  liveText: { color: '#EF4444', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
+
+  mapCardOuter: { width: '100%', marginBottom: 28, borderRadius: 28, padding: 4, backgroundColor: '#FFFFFF', elevation: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.1, shadowRadius: 12 },
+  mapCardInner: { width: '100%', height: 210, borderRadius: 24, overflow: 'hidden' },
+  mapImg: { width: '100%', height: '100%' },
+  mapOverlayBlur: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
+  demandBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(124, 58, 237, 0.9)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 14 },
+  demandText: { color: '#FFFFFF', fontWeight: '900', fontSize: 14, letterSpacing: -0.2 },
+  mapExpandBtn: { position: 'absolute', bottom: 12, right: 12, width: 48, height: 48, borderRadius: 16, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6 },
+
+  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginBottom: 30 },
+  quickActionTile: { width: (width - 54) / 2, borderRadius: 22, padding: 18, alignItems: 'center', gap: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4 },
+  quickActionIconBox: { width: 52, height: 52, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  quickActionLabel: { color: '#0F172A', fontSize: 14, fontWeight: '800' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.8)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 40, borderTopRightRadius: 40, padding: 28, paddingBottom: 48 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 },
+  modalTitle: { color: '#0F172A', fontSize: 28, fontWeight: '900', letterSpacing: -0.8 },
+  modalSubtitle: { color: '#64748B', fontSize: 15, fontWeight: '500', marginTop: 4 },
+  modalCloseBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
+  supportGrid: { gap: 16, marginBottom: 28 },
+  supportTile: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', padding: 20, borderRadius: 24, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1 },
+  tileIconBox: { width: 60, height: 60, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 18 },
+  tileTextContent: { flex: 1 },
+  tileLabel: { color: '#0F172A', fontSize: 17, fontWeight: '800' },
+  tileDesc: { color: '#64748B', fontSize: 13, fontWeight: '500', marginTop: 3 },
+  modalSecondaryBtn: { height: 64, borderRadius: 22, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F1F5F9' },
+  modalSecondaryBtnText: { color: '#475569', fontSize: 16, fontWeight: '800' },
+  
+  // Incoming Order Styles
+  incomingOrderCard: { width: '100%', marginBottom: 24, backgroundColor: '#FFFFFF', borderRadius: 24, overflow: 'hidden', elevation: 8, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 16, borderWidth: 1, borderColor: '#EEF2FF' },
+  incomingOrderHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#6366F1', paddingHorizontal: 16, paddingVertical: 12 },
+  incomingBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 },
+  incomingBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
+  incomingOrderId: { color: '#FFFFFF', fontSize: 13, fontWeight: '700', opacity: 0.9 },
+  incomingOrderDetails: { padding: 20, paddingBottom: 10 },
+  incomingRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  incomingIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
+  incomingLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', marginBottom: 2 },
+  incomingValue: { fontSize: 15, color: '#0F172A', fontWeight: '800' },
+  routeConnector: { marginLeft: 19, height: 28, borderLeftWidth: 2, borderLeftColor: '#E2E8F0', borderStyle: 'dashed', marginVertical: 2 },
+  routeDot: { width: 0, height: 0 }, // optional visual tweak depending on needs
+  routeLine: { width: 0, height: 0 },
+  incomingHighlights: { flexDirection: 'row', gap: 12, paddingHorizontal: 20, paddingBottom: 20 },
+  highlightBox: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#F8FAFC', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#F1F5F9' },
+  highlightText: { fontSize: 13, fontWeight: '800', color: '#1E293B' },
+  incomingActions: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, paddingTop: 0 },
+  rejectBtn: { flex: 1, height: 52, borderRadius: 16, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA' },
+  rejectBtnText: { color: '#EF4444', fontSize: 15, fontWeight: '800' },
+  acceptBtn: { flex: 2, height: 52, borderRadius: 16, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  acceptBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+
+  // Reject Modal Styles
+  reasonGrid: { marginBottom: 24, gap: 12 },
+  reasonChip: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#F8FAFC', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9' },
+  reasonChipActive: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+  reasonChipText: { fontSize: 15, color: '#475569', fontWeight: '600' },
+  reasonChipTextActive: { color: '#EF4444', fontWeight: '800' },
+  reasonInput: { backgroundColor: '#F8FAFC', borderRadius: 16, padding: 16, fontSize: 15, color: '#0F172A', borderColor: '#E2E8F0', borderWidth: 1, minHeight: 100, textAlignVertical: 'top', marginBottom: 24 },
+  modalDangerBtn: { height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', backgroundColor: '#EF4444' },
+  modalDangerBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  
+  // Rejections Card
+  rejectionsCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 16, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8 },
+  rejectionItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
+  rejectionItemBorder: { borderTopWidth: 1, borderTopColor: '#F1F5F9' },
+  rejectionItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, paddingRight: 10 },
+  rejectionIconBox: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#FEF2F2', justifyContent: 'center', alignItems: 'center' },
+  rejectionOrderId: { fontSize: 13, fontWeight: '800', color: '#0F172A', marginBottom: 2 },
+  rejectionReasonText: { fontSize: 12, color: '#64748B', fontWeight: '500' },
+  rejectionTime: { fontSize: 11, color: '#94A3B8', fontWeight: '700' }
+});
