@@ -16,7 +16,7 @@ import { useUser } from "../context/UserContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { authService } from "../services/authService";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { saveToken } from "../services/apiClient";
 import auth from "@react-native-firebase/auth";
 import PremiumPopup, { PopupType } from "../components/PremiumPopup";
 import messaging from "@react-native-firebase/messaging";
@@ -84,7 +84,7 @@ export default function OtpScreen() {
           // Backend Login
           const loginRes = await authService.login(idToken, fcmToken);
           if (loginRes.jwtToken) {
-            await AsyncStorage.setItem('@anusha_jwt_token', loginRes.jwtToken);
+                        await saveToken(loginRes.jwtToken);
           }
           
           const additionalData = { 
@@ -147,13 +147,21 @@ export default function OtpScreen() {
     }
   };
 
-  const resendOtp = async () => {
-    setCanResend(false);
-    setResendTimer(30);
-    setCode("");
-    Alert.alert("Resend Code", "Please request a new code from the previous screen.", [{ text: "OK", onPress: () => router.back() }]);
-  };
-
+    const resendOtp = async () => {
+          if (!canResend) return;
+          setCanResend(false);
+          setResendTimer(60);
+          setCode("");
+          try {
+                  try { await auth().signOut(); } catch (_) {}
+                  const confirmation = await auth().signInWithPhoneNumber(`+91${phone}`);
+                  // Update verificationId - pass it back via router params is not easy in expo-router
+                  // so we alert and go back to re-trigger from login
+                  Alert.alert("New Code Sent", "A new OTP has been sent to your number.");
+          } catch (error: any) {
+                  Alert.alert("Resend Failed", error?.message || "Could not resend. Please go back and try again.");
+          }
+    };
   const renderOtpBoxes = () => {
     const codeArray = code.split("");
     const boxes = [];
