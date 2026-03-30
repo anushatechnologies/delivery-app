@@ -62,7 +62,8 @@ export default function OtpScreen() {
 
       const credential = auth.PhoneAuthProvider.credential(verificationId as string, code);
       const userCred = await auth().signInWithCredential(credential);
-      const idToken = await userCred.user!.getIdToken();
+      // Force-refresh the Firebase token so backend auth stays reliable in release builds.
+      const idToken = await userCred.user!.getIdToken(true);
 
       if (from === "login") {
         try {

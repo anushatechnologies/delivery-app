@@ -253,7 +253,7 @@ export default function RegisterScreen() {
       if (!verificationId) throw new Error("Missing Verification ID");
       const credential = auth.PhoneAuthProvider.credential(verificationId as string, otp);
       const userCred = await auth().signInWithCredential(credential);
-      const token = await userCred.user!.getIdToken();
+      const token = await userCred.user!.getIdToken(true);
       
       setIdToken(token);
       setIsPhoneVerified(true);
@@ -766,10 +766,10 @@ const styles = StyleSheet.create({
   inputIcon: { marginRight: 12, opacity: 0.8 },
   textInput: { flex: 1, color: "#0F172A", fontSize: 16, fontWeight: "700", letterSpacing: 0.5 },
   phoneBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#F8FAFC", borderRadius: 16, height: 58, paddingHorizontal: 16, borderWidth: 1.5, borderColor: "#E2E8F0" },
-  phonePrefix: { justifyContent: "center", alignItems: "center", marginRight: 10 },
-  prefixText: { color: "#334155", fontWeight: "800", fontSize: 16, lineHeight: 20 },
-  inputDivider: { width: 1.5, height: 24, backgroundColor: "#CBD5E1", marginRight: 10 },
-  phoneInput: { flex: 1, color: "#0F172A", fontSize: 17, fontWeight: "800", letterSpacing: 1, height: '100%', paddingVertical: 0, textAlignVertical: "center" },
+    phonePrefix: { justifyContent: "center", alignItems: "center", marginRight: 10 },
+    prefixText: { color: "#334155", fontWeight: "800", fontSize: 16, lineHeight: 20 },
+    inputDivider: { width: 1.5, height: 24, backgroundColor: "#CBD5E1", marginRight: 10 },
+    phoneInput: { flex: 1, color: "#0F172A", fontSize: 17, fontWeight: "800", letterSpacing: 1, height: '100%', paddingVertical: 0, textAlignVertical: "center" },
   phoneActionLight: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, backgroundColor: "#F1F5F9" },
   phoneAction: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, backgroundColor: "#CBD5E1" },
   phoneActionActive: { backgroundColor: "#0A8754", elevation: 4, shadowColor: "#0A8754", shadowOpacity: 0.3, shadowRadius: 8 },
